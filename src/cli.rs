@@ -1,8 +1,10 @@
+pub mod ui;
+
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
 use std::time::Duration;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Config {
     pub count: Option<u64>,
     pub timing: Timing,
@@ -10,17 +12,18 @@ pub struct Config {
     pub args: Vec<OsString>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Timing {
     Immediate,
     Interval(Duration),
     Precise(Duration),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Action {
     Run(Config),
     Help,
+    LongHelp,
     Version,
 }
 
@@ -35,7 +38,8 @@ impl Config {
             if options {
                 let text = arg.to_str();
                 match text {
-                    Some("-h" | "--help") => return Ok(Action::Help),
+                    Some("-h") => return Ok(Action::Help),
+                    Some("--help") => return Ok(Action::LongHelp),
                     Some("-V" | "--version") => return Ok(Action::Version),
                     Some("--") => {
                         options = false;
@@ -44,7 +48,7 @@ impl Config {
                     Some("-n" | "--interval" | "-N" | "--precise-interval") => {
                         let value = args
                             .next()
-                            .ok_or_else(|| format!("missing value for '{}'", arg.display()))?;
+                            .ok_or_else(|| format!("Missing value for '{}'", arg.display()))?;
                         timing = parse_timing(text.unwrap(), &value)?;
                         continue;
                     }
@@ -56,13 +60,13 @@ impl Config {
                 }
                 let bytes = arg.as_bytes();
                 if bytes.starts_with(b"-") {
-                    return Err(format!("unknown option '{}'", arg.display()));
+                    return Err(format!("Unknown option '{}'", arg.display()));
                 }
                 if count.is_none() && !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit) {
                     count = Some(
                         text.unwrap()
                             .parse()
-                            .map_err(|_| format!("count is too large: '{}'", arg.display()))?,
+                            .map_err(|_| format!("Count is too large: '{}'", arg.display()))?,
                     );
                     continue;
                 }
@@ -74,7 +78,7 @@ impl Config {
                 args: args.collect(),
             }));
         }
-        Err("missing command".into())
+        Err("Missing command".into())
     }
 }
 
@@ -88,7 +92,7 @@ fn attached_interval(arg: &str) -> Option<(&str, &str)> {
 }
 
 fn parse_timing(option: &str, value: &OsString) -> Result<Timing, String> {
-    let invalid = || format!("invalid interval '{}'", value.display());
+    let invalid = || format!("Invalid interval '{}'", value.display());
     let seconds = value
         .to_str()
         .and_then(|text| text.parse::<f64>().ok())
@@ -101,29 +105,125 @@ fn parse_timing(option: &str, value: &OsString) -> Result<Timing, String> {
     })
 }
 
-pub fn help_message() -> &'static str {
-    "Run a command repeatedly.
+pub fn help_message() -> String {
+    format!(
+        "\
+{description}
 
-Usage: repete [OPTIONS] [COUNT] COMMAND [ARG ...]
+Usage: {bin} [OPTIONS] [COUNT] COMMAND [ARG ...]
 
 Options:
   -n, --interval <SECONDS>          Wait between commands.
-  -N, --precise-interval <SECONDS>  Keep the original launch cadence.
+  -N, --precise-interval <SECONDS>  Account for command runtime and drift.
+
+Other:
   -h, --help                        Show this message and exit.
   -V, --version                     Show the version and exit.
+",
+        description = env!("CARGO_PKG_DESCRIPTION"),
+        bin = env!("CARGO_BIN_NAME"),
+    )
+}
 
-Without COUNT, repeat until interrupted. Zero runs no commands.
-Without an interval, commands run without an added delay.
-Precise intervals restart immediately on overruns, then resume the cadence.
-Intervals accept nonnegative fractional seconds. The last timing option wins.
-Options end at COMMAND; use -- to run a numeric or dash-prefixed command.
-Commands run directly. Use an explicit shell for shell expressions.
+pub fn longer_help_notice() -> String {
+    format!(
+        "For full help, see `{bin} --help`.",
+        bin = env!("CARGO_BIN_NAME")
+    )
+}
 
+pub fn long_help_message() -> String {
+    format!(
+        "\
+{help}
 Examples:
-  repete 10 echo foo
-  repete -n 0.5 echo foo
-  repete 10 -N 5 echo foo
-  repete 10 sh -c 'printf foo | cat'"
+  Give a count to run a command that many times, or leave it out to
+  repeat until interrupted:
+
+      {attenuate}# Run ten times.{reset}
+      {highlight}${reset} {bin} 10 echo foo
+
+      {attenuate}# Keep running until Ctrl-C.{reset}
+      {highlight}${reset} {bin} echo foo
+
+  Commands run one at a time. The first command starts immediately.
+  Without an interval, the next run starts as soon as the previous one
+  finishes. A count of zero runs nothing, but still requires a command.
+
+Intervals:
+  Use `--interval` to wait between commands:
+
+      {attenuate}# Wait five seconds after each run.{reset}
+      {highlight}${reset} {bin} 10 --interval 5 echo foo
+
+      {attenuate}# Fractional seconds work too.{reset}
+      {highlight}${reset} {bin} --interval 0.5 date
+
+  Use `--precise-interval` to account for the time spent running the
+  command and keep the original cadence:
+
+      {highlight}${reset} {bin} 10 --precise-interval 5 echo foo
+
+  If a command overruns its next scheduled tick, the next run starts
+  immediately, then returns to the original cadence. For example, with
+  a five-second interval, if the first run takes twelve seconds and the
+  second takes one second, the runs start at 0, 12, and 15 seconds.
+  Scheduling and process launch latency can make actual launches late.
+
+  Intervals accept finite, nonnegative seconds, including fractions,
+  with nanosecond resolution. Zero adds no delay. Attached forms such
+  as `-n0.5`, `-N5`, `--interval=5`, and `--precise-interval=5` work too.
+  There is no wait after the last run. If you pass several interval
+  options, the last one wins.
+
+Commands:
+  Commands run directly, with their arguments passed through unchanged:
+
+      {highlight}${reset} {bin} 2 printf '%s\\n' 'a b' '' '$HOME'
+
+  Your calling shell expands unquoted variables and globs before
+  {bin} starts. Use an explicit shell for pipelines, redirections,
+  or expressions that should be evaluated on every run:
+
+      {highlight}${reset} {bin} 10 sh -c 'printf \"%s\\n\" \"$HOME\" | cat'
+
+  Shell aliases and functions are not standalone executables.
+
+  Options can appear on either side of the count, before the command.
+  Options after the command belong to that command. Use `--` before
+  a command whose name is a number or starts with a dash:
+
+      {highlight}${reset} {bin} 2 -- 123
+
+  Standard input, standard output, standard error, environment, and
+  working directory are inherited. Colors, input, and redirected output
+  work as they do when you run the command directly. There are no
+  banners, separators, screen clearing, or output capture.
+
+  Ctrl-C and Ctrl-Z retain ordinary foreground process-group behavior.
+  A signal sent only to {bin}'s PID does not guarantee descendant
+  cleanup. Commands that ignore terminal signals or detach descendants
+  remain responsible for them.
+
+Exit status:
+  A nonzero exit does not stop repetition. When a count is given,
+  {bin} returns the last command's exit code. A command terminated
+  by a signal stops repetition and returns 128 plus the signal number.
+  An explicit shell reports its own exit status.
+
+  Failure to start the command stops repetition: a missing executable
+  returns 127, permission or executable-format errors return 126, and
+  other execution errors return 1. Invalid usage returns 2. Diagnostics
+  go to standard error. A count of zero returns 0.
+
+  Help and version exit successfully without a command.
+",
+        help = help_message(),
+        bin = env!("CARGO_BIN_NAME"),
+        highlight = ui::Color::maybe_color(ui::HIGHLIGHT),
+        attenuate = ui::Color::maybe_color(ui::ATTENUATE),
+        reset = ui::Color::maybe_color(ui::RESET),
+    )
 }
 
 pub fn version_message() -> String {
@@ -200,9 +300,8 @@ mod tests {
 
     #[test]
     fn help_and_version_need_no_command() {
-        for option in ["-h", "--help"] {
-            assert_eq!(parse(&[option]), Ok(Action::Help));
-        }
+        assert_eq!(parse(&["-h"]), Ok(Action::Help));
+        assert_eq!(parse(&["--help"]), Ok(Action::LongHelp));
         for option in ["-V", "--version"] {
             assert_eq!(parse(&[option]), Ok(Action::Version));
         }

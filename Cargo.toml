@@ -2,6 +2,23 @@
 name = "repete"
 version = "0.1.0"
 edition = "2024"
+authors = ["Quentin Richert <noreply@richert.co>"]
 description = "Run a command repeatedly."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qrichert/repete.git"
+readme = "README.md"
+keywords = ["command", "repeat", "interval", "automation"]
+categories = ["command-line-utilities"]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
+strip = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
 
 [dependencies]
+# Output text through a pager.
+lessify = "0.6.0"

@@ -26,7 +26,7 @@ pub fn run(config: &Config) -> Result<i32, RunError> {
             .map_err(|error| execution_error(config, &error))?;
         let status = child.wait().map_err(|error| RunError {
             code: 1,
-            message: format!("cannot wait for '{}': {error}", config.command.display()),
+            message: format!("Cannot wait for '{}': {error}", config.command.display()),
         })?;
         if let Some(signal) = status.signal() {
             return Ok(128 + signal);
@@ -64,7 +64,7 @@ fn execution_error(config: &Config, error: &io::Error) -> RunError {
     };
     RunError {
         code,
-        message: format!("cannot execute '{}': {error}", config.command.display()),
+        message: format!("Cannot execute '{}': {error}", config.command.display()),
     }
 }
 

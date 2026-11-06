@@ -12,6 +12,13 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn help_version_and_usage() {
+    let short_help = output(&["-h"]);
+    assert!(short_help.status.success());
+    assert_eq!(short_help.stderr, b"");
+    let short_help = String::from_utf8(short_help.stdout).unwrap();
+    let summary = short_help
+        .strip_suffix("For full help, see `repete --help`.\n")
+        .expect("short help must point to full help");
     let help = output(&["--help"]);
     assert!(help.status.success());
     assert!(
@@ -19,14 +26,88 @@ fn help_version_and_usage() {
             .starts_with(b"Run a command repeatedly.\n\nUsage:")
     );
     assert_eq!(help.stderr, b"");
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.starts_with(summary));
+    assert!(!help.contains("For full help"));
+    for section in ["Examples:", "Intervals:", "Commands:", "Exit status:"] {
+        assert!(
+            help.contains(section),
+            "missing full-help section: {section}"
+        );
+        assert!(!short_help.contains(section));
+    }
+    assert!(help.contains("0, 12, and 15 seconds"));
     let version = output(&["-V"]);
     assert!(version.status.success());
-    assert_eq!(version.stdout, b"repete 0.1.0\n");
+    assert_eq!(
+        version.stdout,
+        format!("{} {}\n", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")).as_bytes()
+    );
     for args in [vec![], vec!["0"], vec!["-x"], vec!["-n", "NaN", "echo"]] {
         let result = output(&args);
         assert_eq!(result.status.code(), Some(2));
         assert_eq!(result.stdout, b"");
         assert!(String::from_utf8_lossy(&result.stderr).contains("Try 'repete -h' for help."));
+    }
+}
+
+#[test]
+fn full_help_uses_pager_without_intercepting_other_output() {
+    let temp = TempDir::new();
+    let pager = temp.0.join("pager");
+    fs::write(&pager, "#!/bin/sh\nprintf 'pager\\n'\nexec /bin/cat\n").unwrap();
+    fs::set_permissions(&pager, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let mut command = binary();
+    command.arg("--help").env("PAGER", &pager);
+    let help = bounded_output(command, Duration::from_secs(3));
+    assert!(help.status.success());
+    assert!(help.stdout.starts_with(b"pager\nRun a command repeatedly."));
+    assert_eq!(help.stderr, b"");
+
+    for option in ["-h", "-V"] {
+        let mut command = binary();
+        command.arg(option).env("PAGER", &pager);
+        let result = bounded_output(command, Duration::from_secs(3));
+        assert!(result.status.success());
+        assert!(!result.stdout.starts_with(b"pager\n"));
+    }
+
+    let mut command = binary();
+    command
+        .args(["1", "/bin/sh", "-c", "printf '\\033[31mfoo\\033[0m'"])
+        .env("PAGER", &pager);
+    let child = bounded_output(command, Duration::from_secs(3));
+    assert!(child.status.success());
+    assert_eq!(child.stdout, b"\x1b[31mfoo\x1b[0m");
+    assert_eq!(child.stderr, b"");
+}
+
+#[test]
+fn wrapper_colors_respect_no_color() {
+    for no_color in [None, Some(""), Some("1")] {
+        for option in ["--help", "--unknown"] {
+            let mut command = binary();
+            command.arg(option).env_remove("NO_COLOR");
+            if let Some(value) = no_color {
+                command.env("NO_COLOR", value);
+            }
+            let result = bounded_output(command, Duration::from_secs(3));
+            let bytes = if option == "--help" {
+                assert!(result.status.success());
+                result.stdout
+            } else {
+                assert_eq!(result.status.code(), Some(2));
+                result.stderr
+            };
+            if no_color == Some("1") {
+                assert!(!bytes.contains(&0x1b));
+            } else if option == "--help" {
+                assert!(bytes.windows(12).any(|part| part == b"\x1b[0;92m$\x1b[0m"));
+            } else {
+                assert!(bytes.starts_with(b"\x1b[0;91merror\x1b[0m:"));
+            }
+        }
     }
 }
 
@@ -122,7 +203,7 @@ fn execution_failures_stop_with_shell_style_codes() {
         let result = bounded_output(command, Duration::from_secs(3));
         assert_eq!(result.status.code(), Some(code));
         assert_eq!(result.stdout, b"");
-        assert!(String::from_utf8_lossy(&result.stderr).starts_with("repete: cannot execute"));
+        assert!(String::from_utf8_lossy(&result.stderr).starts_with("error: Cannot execute"));
     }
 }
 
@@ -191,7 +272,9 @@ fn output(args: &[&str]) -> Output {
 }
 
 fn binary() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_repete"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_repete"));
+    command.env("NO_COLOR", "1").env("PAGER", "/bin/cat");
+    command
 }
 
 fn bounded_output(mut command: Command, timeout: Duration) -> Output {
