@@ -36,7 +36,7 @@ fn help_version_and_usage() {
         );
         assert!(!short_help.contains(section));
     }
-    assert!(help.contains("0, 12, and 15 seconds"));
+    assert!(help.contains("self-correcting to stay correct over time"));
     let version = output(&["-V"]);
     assert!(version.status.success());
     assert_eq!(

@@ -51,32 +51,31 @@ $ repete echo foo
 
 Commands run one at a time. The first command starts immediately.
 Without an interval, the next run starts as soon as the previous one
-finishes. A count of zero runs nothing, but still requires a command.
+finishes.
 
 ### Intervals
 
-Use `--interval` to wait between commands:
+Use `--interval` (or `-n`) to wait between commands:
 
 ```console
-# Wait five seconds after each run.
+# Wait five seconds between each run.
 $ repete 10 --interval 5 echo foo
 
 # Fractional seconds work too.
 $ repete --interval 0.5 date
 ```
 
-Use `--precise-interval` to account for the time spent running the
-command and keep the original cadence:
+Use `--precise-interval` (or `-N`) to run at a specific cadence,
+accounting for runtime and drift:
 
 ```console
 $ repete 10 --precise-interval 5 echo foo
 ```
 
 If a command overruns its next scheduled tick, the next run starts
-immediately, then returns to the original cadence. For example, with a
-five-second interval, if the first run takes twelve seconds and the
-second takes one second, the runs start at 0, 12, and 15 seconds.
-Scheduling and process launch latency can make actual launches late.
+immediately, then returns to the original cadence. The schedule is
+self-correcting to stay correct over time, even if process latency can
+make individual occurrences launch late.
 
 Intervals accept finite, nonnegative seconds, including fractions, with
 nanosecond resolution. Zero adds no delay. Attached forms such as
